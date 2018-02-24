@@ -17,48 +17,44 @@ game.schedule <- msf_get_results(league='nhl',
 
 
 # get individual game data ------------------------------------------------
-#add home and away teams?????
+TimeToSeconds <- function(ele){
+  ele$time %>% 
+    str_split(':') %>% 
+    map(~.[1] %>% as.numeric() * 60 + .[2] %>% as.numeric()) %>% 
+    unlist()
+}
+
 game.schedule <- read.csv('C:\\Users\\Brian\\Desktop\\GradClasses\\Spring18\\nhlstats\\schedule.csv')
 
-game.data <- game.schedule$request[1:2] %>%
-  map(~msf_get_results(league='nhl',
+game.data <- game.schedule$request[1:200] %>%
+  map_dfr(~msf_get_results(league='nhl',
                        season='2015-2016-regular',
                        feed='game_playbyplay', 
                        params=list(gameid=., playtype='faceoff,goal')
                       )[["api_json"]][["gameplaybyplay"]][["plays"]][["play"]]  %>% 
-      subset(select=c('period', 'time', 'faceoff.wonBy')) %>%
-      split(.$period)
-     ) %>% 
-  unlist(recursive=FALSE)
+          mutate(seconds=TimeToSeconds(.)) %>%
+          mutate(faceoff.wonBy=ifelse(is.na(.$faceoff.wonBy), 'goal', 'stop')) %>%
+          subset(select=c('period', 'seconds', 'faceoff.wonBy')) %>%
+          rename(result=faceoff.wonBy), 
+        .id='id'
+        ) %>%
+  subset(!duplicated(.[, c('id', 'period', 'seconds')]))
 # get individual game data ------------------------------------------------
 
-
 # process into time differences -------------------------------------------
-Time.Calculations <- function(ele){
-  period.calculations <- ele$time %>% 
-    str_split(':') %>% 
-    map(~.[1] %>% as.numeric() * 60 + .[2] %>% as.numeric()) %>% 
-    unlist() %>% 
-    diff() %>%
-    tibble() %>%
-    setNames(c('playtimes'))
-  
-  period.calculations$goal  <- ifelse(!is.na(ele$faceoff.wonBy), FALSE, TRUE) %>% tail(-1)
-  
-  period.calculations$period <- ele$period[1]
-  
-  period.calculations %<>% subset(playtimes != 0)
-}
-
-time.data <- map_df(game.data, Time.Calculations) %T>%
+play.lengths <- c(0, diff(game.data$seconds))
+time.diffs <- game.data %>%
+  cbind(play.lengths) %>%
+  subset(play.lengths > 0, select=c('id', 'period', 'play.lengths', 'result')) %T>%
   write.csv('C:\\Users\\Brian\\Desktop\\GradClasses\\Spring18\\nhlstats\\time_data.csv')
 # process into time differences -------------------------------------------
 
 
 # visual displays ---------------------------------------------------------
-boxplot(time.data$playtimes)
+ggplot(time.diffs) + geom_boxplot(aes(x=period, y=play.lengths))
 
-ggplot(time.data) + geom_boxplot(aes(x=period, y=playtimes))
+IQR(time.diffs$play.lengths)
+summary(time.diffs$play.lengths)
 
-ggplot(time.data, aes(x=playtimes)) + geom_histogram(aes(fill=goal), position=position_fill(reverse=FALSE))
+ggplot(time.diffs %>% subset(play.lengths <= 175), aes(x=play.lengths)) + geom_histogram(aes(fill=result), position=position_fill(reverse=TRUE), binwidth=5)
 # visual displays ---------------------------------------------------------
