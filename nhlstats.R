@@ -91,27 +91,77 @@ pbinom(q=47, size=82, prob=0.58, lower.tail=FALSE)
 pbinom(q=0.5, size=3, prob=0.5825, lower.tail=FALSE)
 
 
-devils.data.html <- getURL('https://www.hockey-reference.com/teams/NJD/2018_games.html') %>% 
-  htmlParse()
+# team data collection ----------------------------------------------------
+win.rate <- 95/82
 
-devils.data <- devils.data.html %>%
-  xpathSApply('//*[@id="games"]/tbody/tr//td[7]', xmlValue) 
+team.ids <- read_csv('C:\\Users\\Brian\\Desktop\\GradClasses\\Spring18\\nhlstats\\teams.csv', 
+                     col_names=c('team', 'name'))
 
-result.data <- devils.data.html %>%
-  xpathSApply('//*[@id="games"]/tbody/tr//td[8]', xmlValue) 
+Team.Data.Collect <- function(x){
+  print(paste('https://www.hockey-reference.com/teams/', x, '/2018_games.html', sep = ''))
+  Sys.sleep(1)
+  getURL(paste('https://www.hockey-reference.com/teams/', x, '/2018_games.html', sep = '')) %>% 
+    htmlParse() %>%
+    xpathSApply('//*[@id="games"]/tbody/tr//td[position()=7 or position()=8]', xmlValue) %>%
+    matrix(ncol=2, byrow=T) %>%
+    as.tibble() %>%
+    rowid_to_column('game') %>%
+    add_row(game = 0, V1 = '', V2 = '', .before = 1) %>%
+    mutate(points = ifelse(V1 == 'W', 2, ifelse(V1 == 'L' & (V2 %in% c('OT', 'SO')), 1, 0)),
+           total.points = cumsum(points),
+           resid = total.points - game*win.rate, 
+           team = x
+    )
+}
 
-devils.t <- tibble(game=0:82, result=c('', devils.data), mod=c('', result.data)) %>%
-  mutate(points = ifelse(result == 'W', 2, ifelse(result == 'L' & (mod == 'OT' | mod == 'SO'), 1, 0))) %>%
-  mutate(remaining = 95-cumsum(points)) %>%
-  mutate(games.left = 82-game) %>%
-  mutate(remaining = ifelse(remaining > 0, remaining, -1)) %>%
-  mutate(prob=pbinom(q=remaining/2, size=games.left, prob=0.58, lower.tail=FALSE)) %>%
-  #mutate(prob=pnorm(remaining/(82-game), mean=48/82, sd=48/82/3, lower.tail=FALSE)) %>%
-  mutate(prob=ifelse(is.na(prob), 1, prob))
+
+points.data <- team.ids$team %>%
+  map_df(~Team.Data.Collect(.)) %>%
+  select(-V1, -V2) %>%
+  select(team, everything())
 
 
-devils.t %>%
-  ggplot(aes(game, prob)) +
-  geom_point()
+
+points.data %>%
+  ggplot(aes(game, resid)) +
+  geom_hex() +
+  geom_hline(yintercept=0, color='yellow')
+  
+points.data %>%
+  ggplot(aes(game, resid)) +
+  geom_point() + 
+  geom_hline(yintercept=0, color='yellow') +
+  facet_wrap(~team)
+
+summary.points.data <- points.data %>%
+  group_by(team) %>%
+  summarise(min = min(resid),
+            max = max(resid),
+            total.points = max(total.points), 
+            end.position = last(resid)
+            ) %>%
+  arrange(desc(total.points))
+
+ggplot(summary.points.data, aes(color=total.points > 95)) +
+  geom_point(aes(reorder(team, total.points), end.position), size=2, show.legend=FALSE) +
+  geom_segment(aes(x=team, xend=team, y=min, yend=max), show.legend=FALSE) +
+  geom_hline(yintercept=0, color='black') +
+  scale_y_continuous(limits=c(-35, 25), breaks=seq(-35, 25, 5)) +
+  coord_flip() +
+  labs(y='Net Points',
+       x='Team',
+       title='NHL Team Position and Season Range') +
+  theme_bw() + 
+  theme(panel.grid.minor.x=element_blank(),
+        panel.grid.major.x=element_blank())
+
+
+
+
+
+
+
+
+
 
 #http://www.sportsclubstats.com/NHL.html
